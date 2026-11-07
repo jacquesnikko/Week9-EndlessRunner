@@ -1,12 +1,14 @@
 # Week 9 Endless Runner
 
-A small Unity endless runner built around the Week 9 fake perspective idea. The player runs in three lanes while obstacles approach from the distance. The game scales obstacles and lane markers using `focalLength / (focalLength + z)` so they grow and spread out as they get closer.
+A small 2D Unity endless runner based on the Week 9 fake perspective lesson. The player, track, and obstacles are flat sprites. Three straight 2D lane guides converge toward the horizon. Obstacles use `focalLength / (focalLength + z)` to get bigger as they approach.
 
 ## Open and play
 
 1. Open this folder in Unity Hub with Unity **2022.3 LTS**.
 2. Open `Assets/Scenes/EndlessRunner.unity`.
 3. Press **Play**.
+
+The scene creates its sprites when Play starts, so the Scene view is simple before you run it. View the **Game** tab while playing.
 
 ## Controls
 
@@ -15,7 +17,7 @@ A small Unity endless runner built around the Week 9 fake perspective idea. The 
 - **Space:** jump over an obstacle
 - **R:** restart after game over
 
-Lane changes ease between lane positions. Obstacles use a manual Z-distance check and a jump-height check for hits. A hit removes 5 HP, the player starts with 100 HP, and health regenerates by 1 point per second up to 100. The game uses no Rigidbody and does not rely on Unity physics collisions.
+Lane changes ease between lane positions. Obstacles use a manual Z-distance and jump-height check for hits. The game sorts flat sprites from far to near, following the painter's algorithm from the lesson. A hit removes 5 HP. The player starts with 100 HP and regenerates 1 point per second. The game has no 3D models, Rigidbody, or physics collisions.
 
 ## Gameplay video
 

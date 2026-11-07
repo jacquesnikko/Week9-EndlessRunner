@@ -1,102 +1,134 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Builds and runs a small endless runner. All gameplay movement is calculated
-/// directly; this scene does not use a Rigidbody or Unity physics collisions.
-/// </summary>
 public class EndlessRunnerGame : MonoBehaviour
 {
-    private const int MaxHealth = 100;
-    private const float LaneWidth = 2.25f;
     private const float PlayerZ = 0f;
+    private const float SpawnZ = 24f;
+    private const float LaneWidth = 2.2f;
     private const float FocalLength = 18f;
-    private const float SpawnZ = 34f;
-    private const float CollisionZRange = 0.85f;
-    private const float JumpDuration = 0.78f;
-    private const float JumpHeight = 2.35f;
-    private const float HitHeight = 1.25f;
-    private const float LaneChangeDuration = 0.32f;
 
-    private struct Obstacle
+    private class Card
     {
-        public GameObject Object;
-        public int Lane;
-        public bool Checked;
-        public Vector3 BaseSize;
+        public Transform transform;
+        public SpriteRenderer sprite;
+        public Vector3 size;
+        public int lane;
+        public bool checkedForHit;
     }
 
-    private struct RoadMarker
-    {
-        public Transform Transform;
-        public float BaseX;
-        public Vector3 BaseSize;
-    }
+    private readonly List<Card> cards = new List<Card>();
+    private readonly List<Card> obstacles = new List<Card>();
 
-    private readonly List<Obstacle> obstacles = new List<Obstacle>();
-    private readonly List<RoadMarker> roadMarkers = new List<RoadMarker>();
-
+    private Sprite squareSprite;
     private Transform player;
-    private Camera gameCamera;
-    private Material playerMaterial;
-    private Material obstacleMaterial;
-    private Material roadMaterial;
-    private Material markerMaterial;
 
-    private int health = MaxHealth;
-    private int currentLane = 1;
+    private int health = 100;
+    private int lane = 1;
     private int targetLane = 1;
     private int score;
-    private float elapsed;
-    private float spawnTimer = 1.1f;
-    private float worldSpeed = 10f;
-    private float jumpTimer = -1f;
-    private float jumpOffset;
-    private float laneMoveTimer;
-    private float laneMoveFrom;
-    private float laneMoveTo;
     private float playerX;
+    private float laneFrom;
+    private float laneTo;
+    private float laneTime;
+    private float jumpTime = -1f;
+    private float jumpHeight;
+    private float regenerateTime;
+    private float spawnTime = 1f;
+    private float elapsed;
+    private float speed = 9f;
     private bool gameOver;
 
     private void Awake()
     {
-        CreateMaterials();
-        CreateCamera();
-        CreateTrack();
-        CreatePlayer();
-        CreateRoadMarkers();
+        squareSprite = Sprite.Create(
+            Texture2D.whiteTexture,
+            new Rect(0f, 0f, 1f, 1f),
+            new Vector2(0.5f, 0.5f),
+            1f);
+
+        Camera gameCamera = new GameObject("Runner Camera").AddComponent<Camera>();
+        gameCamera.orthographic = true;
+        gameCamera.orthographicSize = 5f;
+        gameCamera.backgroundColor = new Color(0.08f, 0.1f, 0.17f);
+        gameCamera.transform.position = new Vector3(0f, 0f, -10f);
+        gameCamera.tag = "MainCamera";
+
+        CreateCard("Flat Track", new Vector3(0f, 0f, 40f),
+            new Vector3(9f, 12f, 1f), new Color(0.17f, 0.2f, 0.28f));
+
+        CreateLaneLine(0);
+        CreateLaneLine(1);
+        CreateLaneLine(2);
+
+        Card playerCard = CreateCard("2D Player", new Vector3(0f, -3.1f, PlayerZ),
+            new Vector3(0.85f, 1.15f, 1f), new Color(0.12f, 0.78f, 0.98f));
+        player = playerCard.transform;
+
     }
 
     private void Update()
     {
-        float delta = Time.deltaTime;
+        float dt = Time.deltaTime;
+
         if (gameOver)
         {
             if (Input.GetKeyDown(KeyCode.R))
-                RestartGame();
+                Restart();
             return;
         }
 
-        elapsed += delta;
+        elapsed += dt;
         score = Mathf.FloorToInt(elapsed * 10f);
-        worldSpeed = 10f + Mathf.Min(8f, elapsed * 0.12f);
-        // Accumulate fractional regeneration so health restores one point per second.
-        regenerationRemainder += delta;
-        if (regenerationRemainder >= 1f)
+        speed = 9f + Mathf.Min(5f, elapsed * 0.08f);
+
+        regenerateTime += dt;
+        while (regenerateTime >= 1f)
         {
-            int restored = Mathf.FloorToInt(regenerationRemainder);
-            health = Mathf.Min(MaxHealth, health + restored);
-            regenerationRemainder -= restored;
+            health = Mathf.Min(100, health + 1);
+            regenerateTime -= 1f;
         }
 
         ReadInput();
-        MovePlayer(delta);
-        MoveRoadMarkers(delta);
-        UpdateObstacles(delta);
-        SpawnObstacles(delta);
+        MovePlayer(dt);
+        MoveObstacles(dt);
+        SpawnObstacle(dt);
+        SortCards();
     }
 
-    private float regenerationRemainder;
+    private Card CreateCard(string name, Vector3 position, Vector3 size, Color color)
+    {
+        GameObject cardObject = new GameObject(name);
+        cardObject.transform.position = position;
+        cardObject.transform.localScale = size;
+
+        SpriteRenderer renderer = cardObject.AddComponent<SpriteRenderer>();
+        renderer.sprite = squareSprite;
+        renderer.color = color;
+
+        Card card = new Card();
+        card.transform = cardObject.transform;
+        card.sprite = renderer;
+        card.size = size;
+        cards.Add(card);
+        return card;
+    }
+
+    private void CreateLaneLine(int laneIndex)
+    {
+        float bottomX = LaneX(laneIndex);
+        float topX = bottomX * 0.4f;
+        float centerX = (bottomX + topX) * 0.5f;
+        float centerY = -3.1f + SpawnZ * 0.11f;
+
+        Card line = CreateCard("Lane " + (laneIndex + 1),
+            new Vector3(centerX, centerY, 38f),
+            new Vector3(0.045f, SpawnZ * 0.22f, 1f),
+            new Color(0.42f, 0.38f, 0.92f));
+
+        float angle = laneIndex == 0 ? -14f : laneIndex == 2 ? 14f : 0f;
+        line.transform.eulerAngles = new Vector3(0f, 0f, angle);
+    }
 
     private void ReadInput()
     {
@@ -104,8 +136,8 @@ public class EndlessRunnerGame : MonoBehaviour
             ChangeLane(-1);
         if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
             ChangeLane(1);
-        if (Input.GetKeyDown(KeyCode.Space) && jumpTimer < 0f)
-            jumpTimer = 0f;
+        if (Input.GetKeyDown(KeyCode.Space) && jumpTime < 0f)
+            jumpTime = 0f;
     }
 
     private void ChangeLane(int direction)
@@ -115,274 +147,154 @@ public class EndlessRunnerGame : MonoBehaviour
             return;
 
         targetLane = nextLane;
-        laneMoveFrom = playerX;
-        laneMoveTo = LanePosition(targetLane);
-        laneMoveTimer = 0f;
+        laneFrom = playerX;
+        laneTo = LaneX(targetLane);
+        laneTime = 0f;
     }
 
-    private void MovePlayer(float delta)
+    private void MovePlayer(float dt)
     {
-        if (targetLane != currentLane || Mathf.Abs(playerX - laneMoveTo) > 0.001f)
+        if (targetLane != lane)
         {
-            laneMoveTimer += delta;
-            float t = Mathf.Clamp01(laneMoveTimer / LaneChangeDuration);
+            laneTime += dt;
+            float t = Mathf.Clamp01(laneTime / 0.3f);
             float eased = Mathf.SmoothStep(0f, 1f, t);
-            playerX = laneMoveFrom + (laneMoveTo - laneMoveFrom) * eased;
+            playerX = laneFrom + (laneTo - laneFrom) * eased;
             if (t >= 1f)
-                currentLane = targetLane;
+                lane = targetLane;
         }
 
-        if (jumpTimer >= 0f)
+        if (jumpTime >= 0f)
         {
-            jumpTimer += delta;
-            float t = Mathf.Clamp01(jumpTimer / JumpDuration);
-            jumpOffset = Mathf.Sin(t * Mathf.PI) * JumpHeight;
-            if (jumpTimer >= JumpDuration)
+            jumpTime += dt;
+            float t = Mathf.Clamp01(jumpTime / 0.75f);
+            jumpHeight = Mathf.Sin(t * Mathf.PI) * 1.8f;
+            if (jumpTime >= 0.75f)
             {
-                jumpTimer = -1f;
-                jumpOffset = 0f;
+                jumpTime = -1f;
+                jumpHeight = 0f;
             }
         }
 
-        player.position = new Vector3(playerX, 0.9f + jumpOffset, PlayerZ);
+        player.position = new Vector3(playerX, -3.1f + jumpHeight, PlayerZ);
     }
 
-    private void SpawnObstacles(float delta)
+    private void SpawnObstacle(float dt)
     {
-        spawnTimer -= delta;
-        if (spawnTimer > 0f)
+        spawnTime -= dt;
+        if (spawnTime > 0f)
             return;
 
-        int lane = Random.Range(0, 3);
-        Vector3 size = new Vector3(1.35f, 1.05f, 0.65f);
-        GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        block.name = "Obstacle";
-        block.transform.position = new Vector3(0f, 0f, SpawnZ);
-        block.GetComponent<Renderer>().sharedMaterial = obstacleMaterial;
-        block.GetComponent<Collider>().enabled = false;
-
-        Obstacle obstacle = new Obstacle();
-        obstacle.Object = block;
-        obstacle.Lane = lane;
-        obstacle.Checked = false;
-        obstacle.BaseSize = size;
+        int obstacleLane = Random.Range(0, 3);
+        Card obstacle = CreateCard("2D Obstacle", new Vector3(0f, 0f, SpawnZ),
+            new Vector3(1.35f, 1.1f, 1f), new Color(1f, 0.28f, 0.14f));
+        obstacle.lane = obstacleLane;
         obstacles.Add(obstacle);
-        ApplyObstaclePerspective(obstacle);
+        UpdateObstacle(obstacle);
 
-        float interval = Mathf.Max(0.72f, 1.3f - elapsed * 0.006f);
-        spawnTimer = interval + Random.Range(0.05f, 0.55f);
+        spawnTime = 1.2f;
     }
 
-    private void UpdateObstacles(float delta)
+    private void MoveObstacles(float dt)
     {
         for (int i = obstacles.Count - 1; i >= 0; i--)
         {
-            Obstacle obstacle = obstacles[i];
-            if (obstacle.Object == null)
+            Card obstacle = obstacles[i];
+            Vector3 position = obstacle.transform.position;
+            position.z -= speed * dt;
+            obstacle.transform.position = position;
+            UpdateObstacle(obstacle);
+
+            float zDifference = Mathf.Abs(obstacle.transform.position.z - PlayerZ);
+            float xDifference = Mathf.Abs(obstacle.transform.position.x - playerX);
+            if (!obstacle.checkedForHit && zDifference < 0.8f && xDifference < 0.9f)
             {
+                obstacle.checkedForHit = true;
+                if (jumpHeight < 1f)
+                    health = Mathf.Max(0, health - 5);
+                if (health == 0)
+                    gameOver = true;
+            }
+
+            if (obstacle.transform.position.z < -2f)
+            {
+                cards.Remove(obstacle);
                 obstacles.RemoveAt(i);
-                continue;
-            }
-
-            Vector3 position = obstacle.Object.transform.position;
-            position.z -= worldSpeed * delta;
-            obstacle.Object.transform.position = position;
-            ApplyObstaclePerspective(obstacle);
-
-            float zDifference = Mathf.Abs(obstacle.Object.transform.position.z - PlayerZ);
-            float laneDifference = Mathf.Abs(obstacle.Object.transform.position.x - playerX);
-            if (!obstacle.Checked && laneDifference <= 0.95f && zDifference <= CollisionZRange)
-            {
-                obstacle.Checked = true;
-                if (jumpOffset < HitHeight)
-                    TakeDamage(5);
-            }
-
-            if (obstacle.Object.transform.position.z < -4f)
-            {
-                Destroy(obstacle.Object);
-                obstacles.RemoveAt(i);
+                Destroy(obstacle.transform.gameObject);
             }
         }
     }
 
-    private void ApplyObstaclePerspective(Obstacle obstacle)
+    private void UpdateObstacle(Card obstacle)
     {
-        Vector3 position = obstacle.Object.transform.position;
-        float depth = Mathf.Max(0f, position.z - PlayerZ);
-        float scale = PerspectiveScale(depth);
-        position.x = LanePosition(obstacle.Lane) * scale;
-        position.y = obstacle.BaseSize.y * scale * 0.5f;
-        obstacle.Object.transform.position = position;
-        obstacle.Object.transform.localScale = obstacle.BaseSize * scale;
+        float z = obstacle.transform.position.z;
+        float scale = PerspectiveScale(z);
+        obstacle.transform.position = new Vector3(
+            LanePositionAtDepth(obstacle.lane, z),
+            -3.1f + z * 0.22f,
+            z);
+        obstacle.transform.localScale = obstacle.size * scale;
     }
 
-    private void TakeDamage(int amount)
+    private void SortCards()
     {
-        health = Mathf.Max(0, health - amount);
-        if (health == 0)
-            gameOver = true;
-    }
-
-    private void RestartGame()
-    {
-        for (int i = 0; i < obstacles.Count; i++)
-        {
-            if (obstacles[i].Object != null)
-                Destroy(obstacles[i].Object);
-        }
-        obstacles.Clear();
-        health = MaxHealth;
-        currentLane = 1;
-        targetLane = 1;
-        playerX = 0f;
-        laneMoveFrom = 0f;
-        laneMoveTo = 0f;
-        laneMoveTimer = 0f;
-        jumpTimer = -1f;
-        jumpOffset = 0f;
-        elapsed = 0f;
-        score = 0;
-        worldSpeed = 10f;
-        spawnTimer = 1.1f;
-        regenerationRemainder = 0f;
-        gameOver = false;
-        player.position = new Vector3(0f, 0.9f, PlayerZ);
-    }
-
-    private void CreateMaterials()
-    {
-        Shader shader = Shader.Find("Standard");
-        if (shader == null)
-            shader = Shader.Find("Unlit/Color");
-        playerMaterial = MakeMaterial(shader, new Color(0.15f, 0.78f, 0.98f));
-        obstacleMaterial = MakeMaterial(shader, new Color(1f, 0.28f, 0.12f));
-        roadMaterial = MakeMaterial(shader, new Color(0.105f, 0.13f, 0.19f));
-        markerMaterial = MakeMaterial(shader, new Color(0.92f, 0.9f, 0.72f));
-    }
-
-    private Material MakeMaterial(Shader shader, Color color)
-    {
-        Material material = new Material(shader);
-        material.color = color;
-        return material;
-    }
-
-    private void CreateCamera()
-    {
-        GameObject cameraObject = new GameObject("Runner Camera");
-        cameraObject.tag = "MainCamera";
-        gameCamera = cameraObject.AddComponent<Camera>();
-        gameCamera.orthographic = true;
-        gameCamera.orthographicSize = 7.2f;
-        gameCamera.backgroundColor = new Color(0.05f, 0.08f, 0.15f);
-        cameraObject.transform.position = new Vector3(0f, 5.5f, -10f);
-        cameraObject.transform.rotation = Quaternion.Euler(17f, 0f, 0f);
-        cameraObject.AddComponent<AudioListener>();
-
-        GameObject lightObject = new GameObject("Scene Light");
-        Light light = lightObject.AddComponent<Light>();
-        light.type = LightType.Directional;
-        light.intensity = 1.15f;
-        lightObject.transform.rotation = Quaternion.Euler(48f, -28f, 0f);
-    }
-
-    private void CreateTrack()
-    {
-        GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        ground.name = "Endless Track";
-        ground.transform.position = new Vector3(0f, -0.2f, 17f);
-        ground.transform.localScale = new Vector3(9f, 0.4f, 62f);
-        ground.GetComponent<Renderer>().sharedMaterial = roadMaterial;
-        ground.GetComponent<Collider>().enabled = false;
-    }
-
-    private void CreatePlayer()
-    {
-        GameObject playerObject = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        playerObject.name = "Player";
-        playerObject.transform.position = new Vector3(0f, 0.9f, PlayerZ);
-        playerObject.transform.localScale = new Vector3(0.82f, 0.9f, 0.72f);
-        playerObject.GetComponent<Renderer>().sharedMaterial = playerMaterial;
-        playerObject.GetComponent<Collider>().enabled = false;
-        player = playerObject.transform;
-    }
-
-    private void CreateRoadMarkers()
-    {
-        for (int i = 0; i < 18; i++)
-        {
-            float z = 2f + i * 2f;
-            CreateRoadMarker(-LaneWidth * 0.5f, z);
-            CreateRoadMarker(LaneWidth * 0.5f, z);
-        }
-    }
-
-    private void CreateRoadMarker(float x, float z)
-    {
-        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        marker.name = "Perspective Lane Marker";
-        marker.GetComponent<Renderer>().sharedMaterial = markerMaterial;
-        marker.GetComponent<Collider>().enabled = false;
-        RoadMarker roadMarker = new RoadMarker();
-        roadMarker.Transform = marker.transform;
-        roadMarker.BaseX = x;
-        roadMarker.BaseSize = new Vector3(0.055f, 0.025f, 0.72f);
-        roadMarkers.Add(roadMarker);
-        SetRoadMarker(roadMarker, z);
-    }
-
-    private void MoveRoadMarkers(float delta)
-    {
-        for (int i = 0; i < roadMarkers.Count; i++)
-        {
-            RoadMarker marker = roadMarkers[i];
-            Vector3 position = marker.Transform.position;
-            position.z -= worldSpeed * delta;
-            if (position.z < 1f)
-                position.z += 36f;
-            SetRoadMarker(marker, position.z);
-        }
-    }
-
-    private void SetRoadMarker(RoadMarker marker, float z)
-    {
-        float scale = PerspectiveScale(Mathf.Max(0f, z - PlayerZ));
-        marker.Transform.position = new Vector3(marker.BaseX * scale, -0.005f, z);
-        marker.Transform.localScale = marker.BaseSize * scale;
+        // Far cards first, near cards last, like the painter's algorithm.
+        cards.Sort((a, b) => b.transform.position.z.CompareTo(a.transform.position.z));
+        for (int i = 0; i < cards.Count; i++)
+            cards[i].sprite.sortingOrder = i;
     }
 
     private float PerspectiveScale(float z)
     {
-        return Mathf.Clamp(FocalLength / (FocalLength + z), 0.24f, 1f);
+        return FocalLength / (FocalLength + z);
     }
 
-    private float LanePosition(int lane)
+    private float LaneX(int laneIndex)
     {
-        return (lane - 1) * LaneWidth;
+        return (laneIndex - 1) * LaneWidth;
+    }
+
+    private float LanePositionAtDepth(int laneIndex, float z)
+    {
+        float depth = Mathf.Clamp01(z / SpawnZ);
+        float perspective = 1f - 0.6f * depth;
+        return LaneX(laneIndex) * perspective;
+    }
+
+    private void Restart()
+    {
+        for (int i = 0; i < obstacles.Count; i++)
+        {
+            cards.Remove(obstacles[i]);
+            Destroy(obstacles[i].transform.gameObject);
+        }
+        obstacles.Clear();
+        health = 100;
+        lane = 1;
+        targetLane = 1;
+        playerX = 0f;
+        laneTime = 0f;
+        laneFrom = 0f;
+        laneTo = 0f;
+        jumpTime = -1f;
+        jumpHeight = 0f;
+        regenerateTime = 0f;
+        spawnTime = 1f;
+        elapsed = 0f;
+        gameOver = false;
+        player.position = new Vector3(0f, -3.1f, PlayerZ);
     }
 
     private void OnGUI()
     {
-        GUI.color = Color.white;
-        GUI.Box(new Rect(20f, 18f, 258f, 72f), GUIContent.none);
-        GUI.Label(new Rect(34f, 24f, 220f, 24f), "HP  " + health + " / " + MaxHealth);
-
-        GUI.color = new Color(0.12f, 0.16f, 0.2f);
-        GUI.Box(new Rect(34f, 53f, 220f, 18f), GUIContent.none);
-        GUI.color = health > 30 ? new Color(0.25f, 0.88f, 0.48f) : new Color(1f, 0.25f, 0.18f);
-        GUI.Box(new Rect(34f, 53f, 220f * health / MaxHealth, 18f), GUIContent.none);
-
-        GUI.color = Color.white;
-        GUI.Label(new Rect(20f, 98f, 250f, 24f), "Score  " + score);
-        GUI.Label(new Rect(20f, 122f, 340f, 24f), "Move: A / D or arrows     Jump: Space");
+        GUI.Label(new Rect(18f, 18f, 220f, 26f), "HP: " + health + " / 100");
+        GUI.Label(new Rect(18f, 44f, 220f, 26f), "Score: " + score);
+        GUI.Label(new Rect(18f, 70f, 380f, 26f), "Move: A / D or arrows     Jump: Space");
 
         if (gameOver)
         {
-            float centerX = Screen.width * 0.5f;
-            GUI.Box(new Rect(centerX - 150f, Screen.height * 0.5f - 58f, 300f, 116f), GUIContent.none);
-            GUI.Label(new Rect(centerX - 110f, Screen.height * 0.5f - 40f, 220f, 32f), "GAME OVER");
-            GUI.Label(new Rect(centerX - 125f, Screen.height * 0.5f - 7f, 250f, 28f), "Press R to run again");
+            GUI.Label(new Rect(Screen.width * 0.5f - 70f, Screen.height * 0.5f, 220f, 30f),
+                "Game over! Press R to restart");
         }
     }
 }
